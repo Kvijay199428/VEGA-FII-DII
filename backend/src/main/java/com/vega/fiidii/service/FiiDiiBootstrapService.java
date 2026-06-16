@@ -86,9 +86,26 @@ public class FiiDiiBootstrapService {
                 records = upstoxClient.fetchDiiRange(fromStr, toStr);
             }
 
+            LocalDate maxReturnedDate = null;
             if (!records.isEmpty()) {
+                maxReturnedDate = records.stream()
+                        .map(r -> java.time.Instant.ofEpochMilli(r.getTimeStamp())
+                                .atZone(ZoneId.of("Asia/Kolkata"))
+                                .toLocalDate())
+                        .max(LocalDate::compareTo)
+                        .orElse(null);
+
+                if (maxReturnedDate != null && maxReturnedDate.isBefore(chunkEnd)) {
+                    logger.warn("[{}] Provider returned stale or missing data. Requested to {}, latest returned {}", category, chunkEnd, maxReturnedDate);
+                }
+
                 logger.info("[{}] Fetched {} records. Appending...", category, records.size());
                 archiveService.appendRecords(records);
+            }
+
+            if (maxReturnedDate == null || maxReturnedDate.isBefore(currentDate)) {
+                logger.warn("[{}] Provider has no data for requested range {} to {}. Latest available appears to be {}. Stopping sync for this category.", category, fromStr, toStr, maxReturnedDate);
+                break;
             }
             
             currentDate = chunkEnd.plusDays(1);

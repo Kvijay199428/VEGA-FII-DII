@@ -21,28 +21,26 @@ public class FiiDiiController {
 
     private final FiiDiiArchiveService archiveService;
     private final UpstoxFiiDiiClient upstoxClient;
+    private final com.vega.fiidii.service.FiiDiiBootstrapService bootstrapService;
 
-    public FiiDiiController(FiiDiiArchiveService archiveService, UpstoxFiiDiiClient upstoxClient) {
+    public FiiDiiController(FiiDiiArchiveService archiveService, UpstoxFiiDiiClient upstoxClient, com.vega.fiidii.service.FiiDiiBootstrapService bootstrapService) {
         this.archiveService = archiveService;
         this.upstoxClient = upstoxClient;
+        this.bootstrapService = bootstrapService;
     }
 
     @GetMapping("/status")
     public Map<String, Object> getStatus() {
         Map<String, Object> status = new HashMap<>();
-        status.put("totalRecords", archiveService.getAllRecords().size());
+        status.put("archiveRecords", archiveService.getAllRecords().size());
         
         LocalDate latestFii = archiveService.getLatestFiiDate();
         LocalDate latestDii = archiveService.getLatestDiiDate();
         
         status.put("latestFiiDate", latestFii != null ? latestFii.toString() : null);
         status.put("latestDiiDate", latestDii != null ? latestDii.toString() : null);
+        status.put("bootstrapComplete", bootstrapService.isBootstrapCompleted());
         
-        LocalDate yesterday = LocalDate.now(ZoneId.of("Asia/Kolkata")).minusDays(1);
-        boolean bootstrapRequired = (latestFii == null || latestFii.isBefore(yesterday)) ||
-                                    (latestDii == null || latestDii.isBefore(yesterday));
-        
-        status.put("bootstrapRequired", bootstrapRequired);
         return status;
     }
 
