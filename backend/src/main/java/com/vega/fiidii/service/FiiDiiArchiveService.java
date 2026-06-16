@@ -50,7 +50,25 @@ public class FiiDiiArchiveService {
     public void init() {
         this.archivePath = configService.getArchivePath();
         this.metadataPath = configService.getMetadataPath();
+        loadMetadata();
         loadArchive();
+    }
+
+    private void loadMetadata() {
+        if (!Files.exists(metadataPath)) return;
+        try {
+            String content = Files.readString(metadataPath);
+            ArchiveMetadata metadata = objectMapper.readValue(content, ArchiveMetadata.class);
+            if (metadata.getLatestFiiDate() != null) {
+                latestFiiDate = LocalDate.parse(metadata.getLatestFiiDate());
+            }
+            if (metadata.getLatestDiiDate() != null) {
+                latestDiiDate = LocalDate.parse(metadata.getLatestDiiDate());
+            }
+            logger.info("Loaded metadata: latestFiiDate={}, latestDiiDate={}", latestFiiDate, latestDiiDate);
+        } catch (Exception e) {
+            logger.warn("Failed to load metadata, will recreate from archive: {}", e.getMessage());
+        }
     }
 
     private void loadArchive() {
@@ -127,6 +145,7 @@ public class FiiDiiArchiveService {
                 updateLatestDates(record);
             }
             logger.info("Appended {} new records.", newRecords.size());
+            logger.info("After append -> latestFiiDate={}, latestDiiDate={}", latestFiiDate, latestDiiDate);
             updateMetadata();
         } catch (IOException e) {
             logger.error("Failed to append records to archive", e);
