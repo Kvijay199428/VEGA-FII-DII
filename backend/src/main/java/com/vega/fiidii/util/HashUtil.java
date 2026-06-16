@@ -5,10 +5,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 public class HashUtil {
-    public static String generateSourceHash(String category, String dataType, long timeStamp) {
+    public static String generateSourceHash(String category, String dataType, long timeStamp, double buyAmount, double sellAmount) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            String input = category + dataType + timeStamp;
+            String input = category + dataType + timeStamp + buyAmount + sellAmount;
             byte[] encodedhash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
             StringBuilder hexString = new StringBuilder(2 * encodedhash.length);
             for (byte b : encodedhash) {

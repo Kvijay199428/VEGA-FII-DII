@@ -25,6 +25,7 @@ if sys.stdout.encoding.lower() != 'utf-8':
 SOURCE_DIR = [
     Path("/root/fiidii/backend"),
     Path("/root/fiidii/storage"),
+    Path("/root/fiidii/data/config"),
 ]
 
 # Directories to exclude from scanning

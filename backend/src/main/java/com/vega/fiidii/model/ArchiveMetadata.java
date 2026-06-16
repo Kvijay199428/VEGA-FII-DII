@@ -6,6 +6,8 @@ public class ArchiveMetadata {
     private long diiRecords;
     private long lastUpdated;
     private long latestTimestamp;
+    private String latestFiiDate;
+    private String latestDiiDate;
 
     public ArchiveMetadata() {
     }
@@ -24,4 +26,10 @@ public class ArchiveMetadata {
 
     public long getLatestTimestamp() { return latestTimestamp; }
     public void setLatestTimestamp(long latestTimestamp) { this.latestTimestamp = latestTimestamp; }
+
+    public String getLatestFiiDate() { return latestFiiDate; }
+    public void setLatestFiiDate(String latestFiiDate) { this.latestFiiDate = latestFiiDate; }
+
+    public String getLatestDiiDate() { return latestDiiDate; }
+    public void setLatestDiiDate(String latestDiiDate) { this.latestDiiDate = latestDiiDate; }
 }

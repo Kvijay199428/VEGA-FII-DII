@@ -48,6 +48,8 @@ public class FiiDiiConfigService {
     public List<String> getFiiDataTypes() { return config.getFii().getDataTypes(); }
     public List<String> getDiiDataTypes() { return config.getDii().getDataTypes(); }
     public int getRefreshIntervalMinutes() { return config.getRefreshIntervalMinutes(); }
+    public int getRequestIntervalMs() { return config.getRequestIntervalMs(); }
+    public int getMaxDaysPerRequest() { return config.getMaxDaysPerRequest(); }
     public Path getArchivePath() { return com.vega.fiidii.util.PathResolver.resolve(config.getStorage().getArchive()); }
     public Path getMetadataPath() { return com.vega.fiidii.util.PathResolver.resolve(config.getStorage().getMetadata()); }
 }

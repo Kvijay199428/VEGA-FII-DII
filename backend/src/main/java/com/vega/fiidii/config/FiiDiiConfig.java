@@ -7,6 +7,8 @@ public class FiiDiiConfig {
     private String defaultInterval;
     private String defaultStartDate;
     private int refreshIntervalMinutes;
+    private int requestIntervalMs = 1000;
+    private int maxDaysPerRequest = 30;
     private int retentionDays;
     private StorageConfig storage;
     private DataConfig fii;
@@ -26,6 +28,12 @@ public class FiiDiiConfig {
 
     public int getRefreshIntervalMinutes() { return refreshIntervalMinutes; }
     public void setRefreshIntervalMinutes(int refreshIntervalMinutes) { this.refreshIntervalMinutes = refreshIntervalMinutes; }
+
+    public int getRequestIntervalMs() { return requestIntervalMs; }
+    public void setRequestIntervalMs(int requestIntervalMs) { this.requestIntervalMs = requestIntervalMs; }
+
+    public int getMaxDaysPerRequest() { return maxDaysPerRequest; }
+    public void setMaxDaysPerRequest(int maxDaysPerRequest) { this.maxDaysPerRequest = maxDaysPerRequest; }
 
     public int getRetentionDays() { return retentionDays; }
     public void setRetentionDays(int retentionDays) { this.retentionDays = retentionDays; }

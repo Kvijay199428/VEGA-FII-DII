@@ -15,6 +15,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -34,6 +37,9 @@ public class FiiDiiArchiveService {
     
     private Path archivePath;
     private Path metadataPath;
+
+    private volatile LocalDate latestFiiDate;
+    private volatile LocalDate latestDiiDate;
 
     public FiiDiiArchiveService(FiiDiiConfigService configService, ObjectMapper objectMapper) {
         this.configService = configService;
@@ -67,14 +73,40 @@ public class FiiDiiArchiveService {
                     InstitutionalFlowRecord record = objectMapper.readValue(line, InstitutionalFlowRecord.class);
                     existingHashes.add(record.getSourceHash());
                     inMemoryArchive.add(record);
+                    updateLatestDates(record);
                 } catch (JsonProcessingException e) {
                     logger.warn("Failed to parse line: {}", line);
                 }
             });
             logger.info("Loaded {} records from archive.", inMemoryArchive.size());
+            logger.info("Latest FII date: {}, Latest DII date: {}", latestFiiDate, latestDiiDate);
         } catch (IOException e) {
             logger.error("Failed to load archive", e);
         }
+    }
+
+    private synchronized void updateLatestDates(InstitutionalFlowRecord record) {
+        LocalDate recordDate = Instant.ofEpochMilli(record.getTimeStamp())
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate();
+                
+        if ("FII".equalsIgnoreCase(record.getCategory())) {
+            if (latestFiiDate == null || recordDate.isAfter(latestFiiDate)) {
+                latestFiiDate = recordDate;
+            }
+        } else if ("DII".equalsIgnoreCase(record.getCategory())) {
+            if (latestDiiDate == null || recordDate.isAfter(latestDiiDate)) {
+                latestDiiDate = recordDate;
+            }
+        }
+    }
+
+    public LocalDate getLatestFiiDate() {
+        return latestFiiDate;
+    }
+
+    public LocalDate getLatestDiiDate() {
+        return latestDiiDate;
     }
 
     public synchronized void appendRecords(List<InstitutionalFlowRecord> records) {
@@ -92,6 +124,7 @@ public class FiiDiiArchiveService {
                 writer.newLine();
                 existingHashes.add(record.getSourceHash());
                 inMemoryArchive.add(record);
+                updateLatestDates(record);
             }
             logger.info("Appended {} new records.", newRecords.size());
             updateMetadata();
@@ -112,8 +145,11 @@ public class FiiDiiArchiveService {
         long latestTimestamp = inMemoryArchive.stream()
                 .mapToLong(InstitutionalFlowRecord::getTimeStamp)
                 .max()
-                .orElse(0);
+                .orElse(0L);
         metadata.setLatestTimestamp(latestTimestamp);
+        
+        if (latestFiiDate != null) metadata.setLatestFiiDate(latestFiiDate.toString());
+        if (latestDiiDate != null) metadata.setLatestDiiDate(latestDiiDate.toString());
 
         try {
             if(metadataPath.getParent() != null) {

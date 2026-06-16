@@ -44,7 +44,7 @@ public class UpstoxFiiDiiClient {
                 configService.getConfig().getFii().getEndpoint(),
                 configService.getFiiDataTypes(),
                 "FII",
-                configService.getDefaultInterval(), null
+                configService.getDefaultInterval(), null, null
         );
     }
 
@@ -53,11 +53,11 @@ public class UpstoxFiiDiiClient {
                 configService.getConfig().getDii().getEndpoint(),
                 configService.getDiiDataTypes(),
                 "DII",
-                configService.getDefaultInterval(), null
+                configService.getDefaultInterval(), null, null
         );
     }
 
-    public List<InstitutionalFlowRecord> fetchAdHoc(String category, String dataType, String interval, String fromDate) {
+    public List<InstitutionalFlowRecord> fetchAdHoc(String category, String dataType, String interval, String fromDate, String toDate) {
         String endpoint = "FII".equalsIgnoreCase(category) ? 
                 configService.getConfig().getFii().getEndpoint() : 
                 configService.getConfig().getDii().getEndpoint();
@@ -66,10 +66,28 @@ public class UpstoxFiiDiiClient {
                 List.of(dataType) : 
                 ("FII".equalsIgnoreCase(category) ? configService.getFiiDataTypes() : configService.getDiiDataTypes());
                 
-        return fetchFiiDiiData(endpoint, dataTypes, category.toUpperCase(), interval, fromDate);
+        return fetchFiiDiiData(endpoint, dataTypes, category.toUpperCase(), interval, fromDate, toDate);
     }
 
-    private List<InstitutionalFlowRecord> fetchFiiDiiData(String endpoint, List<String> dataTypes, String category, String interval, String fromDate) {
+    public List<InstitutionalFlowRecord> fetchFiiRange(String fromDate, String toDate) {
+        return fetchFiiDiiData(
+                configService.getConfig().getFii().getEndpoint(),
+                configService.getFiiDataTypes(),
+                "FII",
+                configService.getDefaultInterval(), fromDate, toDate
+        );
+    }
+
+    public List<InstitutionalFlowRecord> fetchDiiRange(String fromDate, String toDate) {
+        return fetchFiiDiiData(
+                configService.getConfig().getDii().getEndpoint(),
+                configService.getDiiDataTypes(),
+                "DII",
+                configService.getDefaultInterval(), fromDate, toDate
+        );
+    }
+
+    private List<InstitutionalFlowRecord> fetchFiiDiiData(String endpoint, List<String> dataTypes, String category, String interval, String fromDate, String toDate) {
         String queryString = dataTypes.stream()
                 .map(dt -> "data_type=" + URLEncoder.encode(dt, StandardCharsets.UTF_8))
                 .collect(Collectors.joining("&"));
@@ -79,6 +97,9 @@ public class UpstoxFiiDiiClient {
         }
         if (fromDate != null && !fromDate.isEmpty()) {
             queryString += "&from=" + URLEncoder.encode(fromDate, StandardCharsets.UTF_8);
+        }
+        if (toDate != null && !toDate.isEmpty()) {
+            queryString += "&to=" + URLEncoder.encode(toDate, StandardCharsets.UTF_8);
         }
                 
         String url = BASE_URL + endpoint + "?" + queryString;
@@ -150,7 +171,8 @@ public class UpstoxFiiDiiClient {
                         record.setTotalPutShortContracts(node.path("total_put_short_contracts").asLong(0));
                         
                         record.setSourceHash(com.vega.fiidii.util.HashUtil.generateSourceHash(
-                                record.getCategory(), record.getDataType(), record.getTimeStamp()
+                                record.getCategory(), record.getDataType(), record.getTimeStamp(),
+                                record.getBuyAmount(), record.getSellAmount()
                         ));
                         
                         records.add(record);
