@@ -1,6 +1,6 @@
 backend/target/
 logs/
-storage/
+#storage/
 auth/
 data/
 *.env
