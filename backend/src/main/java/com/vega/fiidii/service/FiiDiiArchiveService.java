@@ -87,7 +87,7 @@ public class FiiDiiArchiveService {
 
     private synchronized void updateLatestDates(InstitutionalFlowRecord record) {
         LocalDate recordDate = Instant.ofEpochMilli(record.getTimeStamp())
-                .atZone(ZoneId.systemDefault())
+                .atZone(ZoneId.of("Asia/Kolkata"))
                 .toLocalDate();
                 
         if ("FII".equalsIgnoreCase(record.getCategory())) {

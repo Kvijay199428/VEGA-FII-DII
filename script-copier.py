@@ -26,6 +26,7 @@ SOURCE_DIR = [
     Path("/root/fiidii/backend"),
     Path("/root/fiidii/storage"),
     Path("/root/fiidii/data/config"),
+    Path("/root/fiidii/logs"),
 ]
 
 # Directories to exclude from scanning

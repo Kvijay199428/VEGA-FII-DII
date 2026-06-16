@@ -170,10 +170,7 @@ public class UpstoxFiiDiiClient {
                         record.setTotalCallShortContracts(node.path("total_call_short_contracts").asLong(0));
                         record.setTotalPutShortContracts(node.path("total_put_short_contracts").asLong(0));
                         
-                        record.setSourceHash(com.vega.fiidii.util.HashUtil.generateSourceHash(
-                                record.getCategory(), record.getDataType(), record.getTimeStamp(),
-                                record.getBuyAmount(), record.getSellAmount()
-                        ));
+                        record.setSourceHash(com.vega.fiidii.util.HashUtil.generateSourceHash(record));
                         
                         records.add(record);
                     }

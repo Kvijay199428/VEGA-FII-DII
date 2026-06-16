@@ -1,14 +1,23 @@
 package com.vega.fiidii.util;
 
+import com.vega.fiidii.model.InstitutionalFlowRecord;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 public class HashUtil {
-    public static String generateSourceHash(String category, String dataType, long timeStamp, double buyAmount, double sellAmount) {
+    public static String generateSourceHash(InstitutionalFlowRecord record) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            String input = category + dataType + timeStamp + buyAmount + sellAmount;
+            String input = record.getCategory() + record.getDataType() + record.getTimeStamp() +
+                    record.getBuyAmount() + record.getSellAmount() +
+                    record.getBuyContracts() + record.getSellContracts() +
+                    record.getOiContracts() + record.getOiAmount() +
+                    record.getTotalLongContracts() + record.getTotalShortContracts() +
+                    record.getTotalCallLongContracts() + record.getTotalPutLongContracts() +
+                    record.getTotalCallShortContracts() + record.getTotalPutShortContracts();
+            
             byte[] encodedhash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
             StringBuilder hexString = new StringBuilder(2 * encodedhash.length);
             for (byte b : encodedhash) {

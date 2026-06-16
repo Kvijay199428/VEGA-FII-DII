@@ -21,11 +21,16 @@ public class FiiDiiBootstrapService {
     private final FiiDiiArchiveService archiveService;
     private final UpstoxFiiDiiClient upstoxClient;
     private final FiiDiiConfigService configService;
+    private volatile boolean bootstrapCompleted = false;
 
     public FiiDiiBootstrapService(FiiDiiArchiveService archiveService, UpstoxFiiDiiClient upstoxClient, FiiDiiConfigService configService) {
         this.archiveService = archiveService;
         this.upstoxClient = upstoxClient;
         this.configService = configService;
+    }
+
+    public boolean isBootstrapCompleted() {
+        return bootstrapCompleted;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -37,6 +42,8 @@ public class FiiDiiBootstrapService {
             logger.info("FII/DII Data Bootstrap completed.");
         } catch (Exception e) {
             logger.error("Error during bootstrap sync", e);
+        } finally {
+            bootstrapCompleted = true;
         }
     }
 

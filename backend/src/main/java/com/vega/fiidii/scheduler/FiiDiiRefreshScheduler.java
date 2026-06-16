@@ -21,6 +21,11 @@ public class FiiDiiRefreshScheduler {
 
     @Scheduled(fixedRateString = "#{@fiiDiiConfigService.getRefreshIntervalMinutes() * 60000}", initialDelay = 10000)
     public void refreshFiiDii() {
+        if (!bootstrapService.isBootstrapCompleted()) {
+            logger.info("Bootstrap is not completed yet, skipping scheduled FII/DII refresh.");
+            return;
+        }
+
         logger.info("Starting scheduled FII and DII refresh...");
 
         logger.info("Syncing FII activity...");

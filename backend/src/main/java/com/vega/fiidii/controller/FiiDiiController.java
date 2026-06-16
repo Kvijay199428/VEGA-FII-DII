@@ -38,9 +38,9 @@ public class FiiDiiController {
         status.put("latestFiiDate", latestFii != null ? latestFii.toString() : null);
         status.put("latestDiiDate", latestDii != null ? latestDii.toString() : null);
         
-        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-        boolean bootstrapRequired = (latestFii == null || latestFii.isBefore(today)) ||
-                                    (latestDii == null || latestDii.isBefore(today));
+        LocalDate yesterday = LocalDate.now(ZoneId.of("Asia/Kolkata")).minusDays(1);
+        boolean bootstrapRequired = (latestFii == null || latestFii.isBefore(yesterday)) ||
+                                    (latestDii == null || latestDii.isBefore(yesterday));
         
         status.put("bootstrapRequired", bootstrapRequired);
         return status;
@@ -54,6 +54,10 @@ public class FiiDiiController {
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to) {
         
+        if (category != null && !category.equalsIgnoreCase("FII") && !category.equalsIgnoreCase("DII")) {
+            throw new IllegalArgumentException("Invalid category. Must be FII or DII.");
+        }
+
         if (interval != null || from != null || to != null) {
             // Ad-hoc user query -> fetch directly without storing
             return upstoxClient.fetchAdHoc(category, dataType, interval, from, to);

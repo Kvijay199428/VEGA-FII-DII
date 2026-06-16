@@ -1,9 +1,9 @@
 {
-  "totalRecords" : 234,
-  "fiiRecords" : 195,
-  "diiRecords" : 39,
-  "lastUpdated" : 1781583476529,
+  "totalRecords" : 414,
+  "fiiRecords" : 345,
+  "diiRecords" : 69,
+  "lastUpdated" : 1781584446777,
   "latestTimestamp" : 1779993000000,
-  "latestFiiDate" : "2026-05-28",
-  "latestDiiDate" : "2026-05-28"
+  "latestFiiDate" : "2026-05-29",
+  "latestDiiDate" : "2026-05-29"
 }
