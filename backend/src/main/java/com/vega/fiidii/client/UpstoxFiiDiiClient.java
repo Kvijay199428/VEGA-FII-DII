@@ -88,7 +88,6 @@ public class UpstoxFiiDiiClient {
                 .uri(URI.create(url))
                 .header("Authorization", "Bearer " + credentialManager.getAccessToken())
                 .header("Accept", "application/json")
-                .header("Accept-Encoding", "gzip, deflate")
                 .timeout(Duration.ofSeconds(10))
                 .GET()
                 .build();
@@ -101,6 +100,7 @@ public class UpstoxFiiDiiClient {
         for (int i = 1; i <= maxRetries; i++) {
             try {
                 HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                logger.info("Content-Encoding={}", response.headers().firstValue("Content-Encoding").orElse("none"));
                 if (response.statusCode() == 200) {
                     return parseResponse(response.body(), category);
                 } else {
@@ -160,6 +160,7 @@ public class UpstoxFiiDiiClient {
         } else {
             logger.warn("Upstox response 'data' field is not an object. Found: {}", dataNode.getNodeType());
         }
+        logger.info("Parsed {} records from {}", records.size(), category);
         return records;
     }
 }
