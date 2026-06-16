@@ -1,0 +1,10 @@
+backend/target/
+logs/
+storage/
+auth/
+data/
+*.env
+*.log
+.DS_Store
+.idea/
+*.iml
