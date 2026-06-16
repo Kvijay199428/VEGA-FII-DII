@@ -39,7 +39,7 @@ public class FiiDiiController {
         
         status.put("latestFiiDate", latestFii != null ? latestFii.toString() : null);
         status.put("latestDiiDate", latestDii != null ? latestDii.toString() : null);
-        status.put("bootstrapComplete", bootstrapService.isBootstrapCompleted());
+        status.put("bootstrapState", bootstrapService.getBootstrapState().name());
         
         return status;
     }

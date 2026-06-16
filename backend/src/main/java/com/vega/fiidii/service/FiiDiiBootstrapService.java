@@ -21,8 +21,13 @@ public class FiiDiiBootstrapService {
     private final FiiDiiArchiveService archiveService;
     private final UpstoxFiiDiiClient upstoxClient;
     private final FiiDiiConfigService configService;
-    private volatile boolean bootstrapCompleted = false;
-    private final java.util.concurrent.locks.ReentrantLock syncLock = new java.util.concurrent.locks.ReentrantLock();
+    private volatile com.vega.fiidii.model.BootstrapState state = com.vega.fiidii.model.BootstrapState.NOT_STARTED;
+    private final java.util.concurrent.locks.ReentrantLock fiiLock = new java.util.concurrent.locks.ReentrantLock();
+    private final java.util.concurrent.locks.ReentrantLock diiLock = new java.util.concurrent.locks.ReentrantLock();
+
+    private java.util.concurrent.locks.ReentrantLock getLock(String category) {
+        return "FII".equalsIgnoreCase(category) ? fiiLock : diiLock;
+    }
 
     public FiiDiiBootstrapService(FiiDiiArchiveService archiveService, UpstoxFiiDiiClient upstoxClient, FiiDiiConfigService configService) {
         this.archiveService = archiveService;
@@ -30,26 +35,28 @@ public class FiiDiiBootstrapService {
         this.configService = configService;
     }
 
-    public boolean isBootstrapCompleted() {
-        return bootstrapCompleted;
+    public com.vega.fiidii.model.BootstrapState getBootstrapState() {
+        return state;
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public void bootstrap() {
         logger.info("Starting FII/DII Data Bootstrap...");
+        state = com.vega.fiidii.model.BootstrapState.RUNNING;
         try {
             syncData("FII", archiveService.getLatestFiiDate());
             syncData("DII", archiveService.getLatestDiiDate());
-            logger.info("FII/DII Data Bootstrap completed.");
+            state = com.vega.fiidii.model.BootstrapState.SUCCESS;
+            logger.info("FII/DII Data Bootstrap completed successfully.");
         } catch (Exception e) {
+            state = com.vega.fiidii.model.BootstrapState.FAILED;
             logger.error("Error during bootstrap sync", e);
-        } finally {
-            bootstrapCompleted = true;
         }
     }
 
     public void syncData(String category, LocalDate latestStoredDate) {
-        if (!syncLock.tryLock()) {
+        java.util.concurrent.locks.ReentrantLock lock = getLock(category);
+        if (!lock.tryLock()) {
             logger.warn("[{}] Sync already running, skipping concurrent execution.", category);
             return;
         }
@@ -131,7 +138,7 @@ public class FiiDiiBootstrapService {
             }
         }
         } finally {
-            syncLock.unlock();
+            lock.unlock();
         }
     }
 }

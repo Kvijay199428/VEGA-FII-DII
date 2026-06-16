@@ -127,9 +127,37 @@ public class UpstoxFiiDiiClient {
                 } else {
                     logger.warn("Attempt {}: Failed to fetch {}. Status code: {}", i, category, response.statusCode());
                     logger.error("Response Body: {}", response.body());
+                    if (response.statusCode() == 429 && i < maxRetries) {
+                        long waitSeconds = response.headers()
+                                .firstValue("Retry-After")
+                                .map(val -> {
+                                    try {
+                                        return Long.parseLong(val);
+                                    } catch (NumberFormatException e) {
+                                        return 60L;
+                                    }
+                                })
+                                .orElse(60L);
+                        logger.warn("Rate limited (429)! Waiting {} seconds before retry...", waitSeconds);
+                        Thread.sleep(waitSeconds * 1000);
+                    } else if (i < maxRetries) {
+                        Thread.sleep(1000);
+                    }
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.warn("Attempt {}: Interrupted while fetching {}: {}", i, category, e.getMessage());
+                break;
             } catch (Exception e) {
                 logger.warn("Attempt {}: Exception while fetching {}: {}", i, category, e.getMessage());
+                if (i < maxRetries) {
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             }
             if (i == maxRetries) {
                 logger.error("Failed to fetch {} after {} attempts", category, maxRetries);

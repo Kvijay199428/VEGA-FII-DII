@@ -249,9 +249,37 @@ public class UpstoxFiiDiiClient {
                 } else {
                     logger.warn("Attempt {}: Failed to fetch {}. Status code: {}", i, category, response.statusCode());
                     logger.error("Response Body: {}", response.body());
+                    if (response.statusCode() == 429 && i < maxRetries) {
+                        long waitSeconds = response.headers()
+                                .firstValue("Retry-After")
+                                .map(val -> {
+                                    try {
+                                        return Long.parseLong(val);
+                                    } catch (NumberFormatException e) {
+                                        return 60L;
+                                    }
+                                })
+                                .orElse(60L);
+                        logger.warn("Rate limited (429)! Waiting {} seconds before retry...", waitSeconds);
+                        Thread.sleep(waitSeconds * 1000);
+                    } else if (i < maxRetries) {
+                        Thread.sleep(1000);
+                    }
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                logger.warn("Attempt {}: Interrupted while fetching {}: {}", i, category, e.getMessage());
+                break;
             } catch (Exception e) {
                 logger.warn("Attempt {}: Exception while fetching {}: {}", i, category, e.getMessage());
+                if (i < maxRetries) {
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             }
             if (i == maxRetries) {
                 logger.error("Failed to fetch {} after {} attempts", category, maxRetries);
@@ -511,7 +539,7 @@ public class FiiDiiController {
         
         status.put("latestFiiDate", latestFii != null ? latestFii.toString() : null);
         status.put("latestDiiDate", latestDii != null ? latestDii.toString() : null);
-        status.put("bootstrapComplete", bootstrapService.isBootstrapCompleted());
+        status.put("bootstrapState", bootstrapService.getBootstrapState().name());
         
         return status;
     }
@@ -582,6 +610,19 @@ public class ArchiveMetadata {
 
     public String getProviderLatestDiiDate() { return providerLatestDiiDate; }
     public void setProviderLatestDiiDate(String providerLatestDiiDate) { this.providerLatestDiiDate = providerLatestDiiDate; }
+}
+```
+
+```java
+// File: src/main/java/com/vega/fiidii/model/BootstrapState.java
+package com.vega.fiidii.model;
+
+public enum BootstrapState {
+    NOT_STARTED,
+    RUNNING,
+    SUCCESS,
+    FAILED,
+    PARTIAL
 }
 ```
 
@@ -705,7 +746,7 @@ public class FiiDiiRefreshScheduler {
 
     @Scheduled(cron = "0 0 16 * * MON-FRI", zone = "Asia/Kolkata")
     public void startDailySync() {
-        if (!bootstrapService.isBootstrapCompleted()) {
+        if (bootstrapService.getBootstrapState() != com.vega.fiidii.model.BootstrapState.SUCCESS) {
             logger.info("Bootstrap is not completed yet, skipping daily sync.");
             return;
         }
@@ -716,22 +757,38 @@ public class FiiDiiRefreshScheduler {
         logger.info("Completed daily FII and DII refresh.");
     }
 
+    private boolean shouldRetry(java.time.LocalDate latestStored, java.time.LocalDate providerLatest, java.time.LocalDate today) {
+        if (today.equals(latestStored)) {
+            return false;
+        }
+
+        if (providerLatest != null && !providerLatest.isAfter(latestStored) && !providerLatest.equals(today)) {
+            return false;
+        }
+
+        return true;
+    }
+
     @Scheduled(cron = "0 0 17-23 * * MON-FRI", zone = "Asia/Kolkata")
     public void retryIfMissing() {
-        if (!bootstrapService.isBootstrapCompleted()) {
+        if (bootstrapService.getBootstrapState() != com.vega.fiidii.model.BootstrapState.SUCCESS) {
             return;
         }
 
         java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
 
-        if (archiveService.getLatestFiiDate() == null || !today.equals(archiveService.getLatestFiiDate())) {
+        if (shouldRetry(archiveService.getLatestFiiDate(), archiveService.getProviderLatestFiiDate(), today)) {
             logger.info("Hourly retry: Syncing FII activity...");
             bootstrapService.syncData("FII", archiveService.getLatestFiiDate());
+        } else {
+            logger.info("Hourly retry: Skipping FII activity, provider hasn't published newer data or already up to date.");
         }
 
-        if (archiveService.getLatestDiiDate() == null || !today.equals(archiveService.getLatestDiiDate())) {
+        if (shouldRetry(archiveService.getLatestDiiDate(), archiveService.getProviderLatestDiiDate(), today)) {
             logger.info("Hourly retry: Syncing DII activity...");
             bootstrapService.syncData("DII", archiveService.getLatestDiiDate());
+        } else {
+            logger.info("Hourly retry: Skipping DII activity, provider hasn't published newer data or already up to date.");
         }
     }
 }
@@ -1074,8 +1131,13 @@ public class FiiDiiBootstrapService {
     private final FiiDiiArchiveService archiveService;
     private final UpstoxFiiDiiClient upstoxClient;
     private final FiiDiiConfigService configService;
-    private volatile boolean bootstrapCompleted = false;
-    private final java.util.concurrent.locks.ReentrantLock syncLock = new java.util.concurrent.locks.ReentrantLock();
+    private volatile com.vega.fiidii.model.BootstrapState state = com.vega.fiidii.model.BootstrapState.NOT_STARTED;
+    private final java.util.concurrent.locks.ReentrantLock fiiLock = new java.util.concurrent.locks.ReentrantLock();
+    private final java.util.concurrent.locks.ReentrantLock diiLock = new java.util.concurrent.locks.ReentrantLock();
+
+    private java.util.concurrent.locks.ReentrantLock getLock(String category) {
+        return "FII".equalsIgnoreCase(category) ? fiiLock : diiLock;
+    }
 
     public FiiDiiBootstrapService(FiiDiiArchiveService archiveService, UpstoxFiiDiiClient upstoxClient, FiiDiiConfigService configService) {
         this.archiveService = archiveService;
@@ -1083,26 +1145,28 @@ public class FiiDiiBootstrapService {
         this.configService = configService;
     }
 
-    public boolean isBootstrapCompleted() {
-        return bootstrapCompleted;
+    public com.vega.fiidii.model.BootstrapState getBootstrapState() {
+        return state;
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public void bootstrap() {
         logger.info("Starting FII/DII Data Bootstrap...");
+        state = com.vega.fiidii.model.BootstrapState.RUNNING;
         try {
             syncData("FII", archiveService.getLatestFiiDate());
             syncData("DII", archiveService.getLatestDiiDate());
-            logger.info("FII/DII Data Bootstrap completed.");
+            state = com.vega.fiidii.model.BootstrapState.SUCCESS;
+            logger.info("FII/DII Data Bootstrap completed successfully.");
         } catch (Exception e) {
+            state = com.vega.fiidii.model.BootstrapState.FAILED;
             logger.error("Error during bootstrap sync", e);
-        } finally {
-            bootstrapCompleted = true;
         }
     }
 
     public void syncData(String category, LocalDate latestStoredDate) {
-        if (!syncLock.tryLock()) {
+        java.util.concurrent.locks.ReentrantLock lock = getLock(category);
+        if (!lock.tryLock()) {
             logger.warn("[{}] Sync already running, skipping concurrent execution.", category);
             return;
         }
@@ -1184,7 +1248,7 @@ public class FiiDiiBootstrapService {
             }
         }
         } finally {
-            syncLock.unlock();
+            lock.unlock();
         }
     }
 }
@@ -1445,7 +1509,7 @@ logging:
   "totalRecords" : 120,
   "fiiRecords" : 100,
   "diiRecords" : 20,
-  "lastUpdated" : 1781607459489,
+  "lastUpdated" : 1781625699655,
   "latestTimestamp" : 1777487400000,
   "latestFiiDate" : "2026-04-30",
   "latestDiiDate" : "2026-04-30",
