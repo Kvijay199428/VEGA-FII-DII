@@ -1478,7 +1478,7 @@ logging:
   "totalRecords" : 234,
   "fiiRecords" : 195,
   "diiRecords" : 39,
-  "lastUpdated" : 1781593190119,
+  "lastUpdated" : 1781594746796,
   "latestTimestamp" : 1779993000000,
   "latestFiiDate" : "2026-05-29",
   "latestDiiDate" : "2026-05-29"
