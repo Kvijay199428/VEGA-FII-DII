@@ -22,6 +22,7 @@ public class FiiDiiBootstrapService {
     private final UpstoxFiiDiiClient upstoxClient;
     private final FiiDiiConfigService configService;
     private volatile boolean bootstrapCompleted = false;
+    private final java.util.concurrent.locks.ReentrantLock syncLock = new java.util.concurrent.locks.ReentrantLock();
 
     public FiiDiiBootstrapService(FiiDiiArchiveService archiveService, UpstoxFiiDiiClient upstoxClient, FiiDiiConfigService configService) {
         this.archiveService = archiveService;
@@ -48,19 +49,24 @@ public class FiiDiiBootstrapService {
     }
 
     public void syncData(String category, LocalDate latestStoredDate) {
-        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-        LocalDate startDate;
-
-        if (latestStoredDate == null) {
-            startDate = configService.getDefaultStartDate();
-        } else {
-            startDate = latestStoredDate.plusDays(1);
-        }
-
-        if (startDate.isAfter(today)) {
-            logger.info("[{}] No bootstrap sync required. Latest stored date {} is up to date.", category, latestStoredDate);
+        if (!syncLock.tryLock()) {
+            logger.warn("[{}] Sync already running, skipping concurrent execution.", category);
             return;
         }
+        try {
+            LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+            LocalDate startDate;
+
+            if (latestStoredDate == null) {
+                startDate = configService.getDefaultStartDate();
+            } else {
+                startDate = latestStoredDate.plusDays(1);
+            }
+
+            if (startDate.isAfter(today)) {
+                logger.info("[{}] No bootstrap sync required. Latest stored date {} is up to date.", category, latestStoredDate);
+                return;
+            }
         
         logger.info("[{}] Missing data from {} to {}", category, startDate, today);
         
@@ -103,6 +109,10 @@ public class FiiDiiBootstrapService {
                 archiveService.appendRecords(records);
             }
 
+            if (maxReturnedDate != null) {
+                archiveService.setProviderLatestDate(category, maxReturnedDate);
+            }
+
             if (maxReturnedDate == null || maxReturnedDate.isBefore(currentDate)) {
                 logger.warn("[{}] Provider has no data for requested range {} to {}. Latest available appears to be {}. Stopping sync for this category.", category, fromStr, toStr, maxReturnedDate);
                 break;
@@ -119,6 +129,9 @@ public class FiiDiiBootstrapService {
                     break;
                 }
             }
+        }
+        } finally {
+            syncLock.unlock();
         }
     }
 }

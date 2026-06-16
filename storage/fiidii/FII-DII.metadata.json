@@ -2,8 +2,10 @@
   "totalRecords" : 120,
   "fiiRecords" : 100,
   "diiRecords" : 20,
-  "lastUpdated" : 1781603679999,
+  "lastUpdated" : 1781607459489,
   "latestTimestamp" : 1777487400000,
   "latestFiiDate" : "2026-04-30",
-  "latestDiiDate" : "2026-04-30"
+  "latestDiiDate" : "2026-04-30",
+  "providerLatestFiiDate" : "2026-04-30",
+  "providerLatestDiiDate" : "2026-04-30"
 }

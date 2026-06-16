@@ -550,6 +550,8 @@ public class ArchiveMetadata {
     private long latestTimestamp;
     private String latestFiiDate;
     private String latestDiiDate;
+    private String providerLatestFiiDate;
+    private String providerLatestDiiDate;
 
     public ArchiveMetadata() {
     }
@@ -574,6 +576,12 @@ public class ArchiveMetadata {
 
     public String getLatestDiiDate() { return latestDiiDate; }
     public void setLatestDiiDate(String latestDiiDate) { this.latestDiiDate = latestDiiDate; }
+
+    public String getProviderLatestFiiDate() { return providerLatestFiiDate; }
+    public void setProviderLatestFiiDate(String providerLatestFiiDate) { this.providerLatestFiiDate = providerLatestFiiDate; }
+
+    public String getProviderLatestDiiDate() { return providerLatestDiiDate; }
+    public void setProviderLatestDiiDate(String providerLatestDiiDate) { this.providerLatestDiiDate = providerLatestDiiDate; }
 }
 ```
 
@@ -695,22 +703,36 @@ public class FiiDiiRefreshScheduler {
         this.bootstrapService = bootstrapService;
     }
 
-    @Scheduled(fixedRateString = "#{@fiiDiiConfigService.getRefreshIntervalMinutes() * 60000}", initialDelay = 10000)
-    public void refreshFiiDii() {
+    @Scheduled(cron = "0 0 16 * * MON-FRI", zone = "Asia/Kolkata")
+    public void startDailySync() {
         if (!bootstrapService.isBootstrapCompleted()) {
-            logger.info("Bootstrap is not completed yet, skipping scheduled FII/DII refresh.");
+            logger.info("Bootstrap is not completed yet, skipping daily sync.");
             return;
         }
 
-        logger.info("Starting scheduled FII and DII refresh...");
-
-        logger.info("Syncing FII activity...");
+        logger.info("Starting daily market close FII and DII refresh...");
         bootstrapService.syncData("FII", archiveService.getLatestFiiDate());
-
-        logger.info("Syncing DII activity...");
         bootstrapService.syncData("DII", archiveService.getLatestDiiDate());
+        logger.info("Completed daily FII and DII refresh.");
+    }
 
-        logger.info("Completed scheduled FII and DII refresh.");
+    @Scheduled(cron = "0 0 17-23 * * MON-FRI", zone = "Asia/Kolkata")
+    public void retryIfMissing() {
+        if (!bootstrapService.isBootstrapCompleted()) {
+            return;
+        }
+
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
+
+        if (archiveService.getLatestFiiDate() == null || !today.equals(archiveService.getLatestFiiDate())) {
+            logger.info("Hourly retry: Syncing FII activity...");
+            bootstrapService.syncData("FII", archiveService.getLatestFiiDate());
+        }
+
+        if (archiveService.getLatestDiiDate() == null || !today.equals(archiveService.getLatestDiiDate())) {
+            logger.info("Hourly retry: Syncing DII activity...");
+            bootstrapService.syncData("DII", archiveService.getLatestDiiDate());
+        }
     }
 }
 ```
@@ -759,6 +781,9 @@ public class FiiDiiArchiveService {
 
     private volatile LocalDate latestFiiDate;
     private volatile LocalDate latestDiiDate;
+    
+    private volatile LocalDate providerLatestFiiDate;
+    private volatile LocalDate providerLatestDiiDate;
 
     public FiiDiiArchiveService(FiiDiiConfigService configService, ObjectMapper objectMapper) {
         this.configService = configService;
@@ -789,8 +814,14 @@ public class FiiDiiArchiveService {
             if (latestDiiDate == null && metadata.getLatestDiiDate() != null) {
                 latestDiiDate = LocalDate.parse(metadata.getLatestDiiDate());
             }
+            if (metadata.getProviderLatestFiiDate() != null) {
+                providerLatestFiiDate = LocalDate.parse(metadata.getProviderLatestFiiDate());
+            }
+            if (metadata.getProviderLatestDiiDate() != null) {
+                providerLatestDiiDate = LocalDate.parse(metadata.getProviderLatestDiiDate());
+            }
             
-            logger.info("Loaded metadata: latestFiiDate={}, latestDiiDate={}", latestFiiDate, latestDiiDate);
+            logger.info("Loaded metadata: latestFiiDate={}, latestDiiDate={}, providerFii={}, providerDii={}", latestFiiDate, latestDiiDate, providerLatestFiiDate, providerLatestDiiDate);
         } catch (Exception e) {
             logger.warn("Failed to load metadata: {}", e.getMessage());
         }
@@ -874,6 +905,23 @@ public class FiiDiiArchiveService {
         return latestDiiDate;
     }
 
+    public LocalDate getProviderLatestFiiDate() {
+        return providerLatestFiiDate;
+    }
+
+    public LocalDate getProviderLatestDiiDate() {
+        return providerLatestDiiDate;
+    }
+
+    public synchronized void setProviderLatestDate(String category, LocalDate date) {
+        if ("FII".equalsIgnoreCase(category)) {
+            providerLatestFiiDate = date;
+        } else if ("DII".equalsIgnoreCase(category)) {
+            providerLatestDiiDate = date;
+        }
+        updateMetadata();
+    }
+
     public synchronized void appendRecords(List<InstitutionalFlowRecord> records) {
         if (records == null || records.isEmpty()) return;
         
@@ -953,14 +1001,19 @@ public class FiiDiiArchiveService {
         
         if (latestFiiDate != null) metadata.setLatestFiiDate(latestFiiDate.toString());
         if (latestDiiDate != null) metadata.setLatestDiiDate(latestDiiDate.toString());
+        if (providerLatestFiiDate != null) metadata.setProviderLatestFiiDate(providerLatestFiiDate.toString());
+        if (providerLatestDiiDate != null) metadata.setProviderLatestDiiDate(providerLatestDiiDate.toString());
 
         try {
             if(metadataPath.getParent() != null) {
                 Files.createDirectories(metadataPath.getParent());
             }
-            Files.writeString(metadataPath, objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(metadata));
+            String content = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(metadata);
+            Path tempPath = metadataPath.resolveSibling(metadataPath.getFileName() + ".tmp");
+            Files.writeString(tempPath, content);
+            Files.move(tempPath, metadataPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
-            logger.error("Failed to write metadata", e);
+            logger.error("Failed to write metadata atomically", e);
         }
     }
 
@@ -1022,6 +1075,7 @@ public class FiiDiiBootstrapService {
     private final UpstoxFiiDiiClient upstoxClient;
     private final FiiDiiConfigService configService;
     private volatile boolean bootstrapCompleted = false;
+    private final java.util.concurrent.locks.ReentrantLock syncLock = new java.util.concurrent.locks.ReentrantLock();
 
     public FiiDiiBootstrapService(FiiDiiArchiveService archiveService, UpstoxFiiDiiClient upstoxClient, FiiDiiConfigService configService) {
         this.archiveService = archiveService;
@@ -1048,19 +1102,24 @@ public class FiiDiiBootstrapService {
     }
 
     public void syncData(String category, LocalDate latestStoredDate) {
-        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-        LocalDate startDate;
-
-        if (latestStoredDate == null) {
-            startDate = configService.getDefaultStartDate();
-        } else {
-            startDate = latestStoredDate.plusDays(1);
-        }
-
-        if (startDate.isAfter(today)) {
-            logger.info("[{}] No bootstrap sync required. Latest stored date {} is up to date.", category, latestStoredDate);
+        if (!syncLock.tryLock()) {
+            logger.warn("[{}] Sync already running, skipping concurrent execution.", category);
             return;
         }
+        try {
+            LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+            LocalDate startDate;
+
+            if (latestStoredDate == null) {
+                startDate = configService.getDefaultStartDate();
+            } else {
+                startDate = latestStoredDate.plusDays(1);
+            }
+
+            if (startDate.isAfter(today)) {
+                logger.info("[{}] No bootstrap sync required. Latest stored date {} is up to date.", category, latestStoredDate);
+                return;
+            }
         
         logger.info("[{}] Missing data from {} to {}", category, startDate, today);
         
@@ -1103,6 +1162,10 @@ public class FiiDiiBootstrapService {
                 archiveService.appendRecords(records);
             }
 
+            if (maxReturnedDate != null) {
+                archiveService.setProviderLatestDate(category, maxReturnedDate);
+            }
+
             if (maxReturnedDate == null || maxReturnedDate.isBefore(currentDate)) {
                 logger.warn("[{}] Provider has no data for requested range {} to {}. Latest available appears to be {}. Stopping sync for this category.", category, fromStr, toStr, maxReturnedDate);
                 break;
@@ -1119,6 +1182,9 @@ public class FiiDiiBootstrapService {
                     break;
                 }
             }
+        }
+        } finally {
+            syncLock.unlock();
         }
     }
 }
@@ -1379,9 +1445,11 @@ logging:
   "totalRecords" : 120,
   "fiiRecords" : 100,
   "diiRecords" : 20,
-  "lastUpdated" : 1781603679999,
+  "lastUpdated" : 1781607459489,
   "latestTimestamp" : 1777487400000,
   "latestFiiDate" : "2026-04-30",
-  "latestDiiDate" : "2026-04-30"
+  "latestDiiDate" : "2026-04-30",
+  "providerLatestFiiDate" : "2026-04-30",
+  "providerLatestDiiDate" : "2026-04-30"
 }
 ```

@@ -40,6 +40,9 @@ public class FiiDiiArchiveService {
 
     private volatile LocalDate latestFiiDate;
     private volatile LocalDate latestDiiDate;
+    
+    private volatile LocalDate providerLatestFiiDate;
+    private volatile LocalDate providerLatestDiiDate;
 
     public FiiDiiArchiveService(FiiDiiConfigService configService, ObjectMapper objectMapper) {
         this.configService = configService;
@@ -70,8 +73,14 @@ public class FiiDiiArchiveService {
             if (latestDiiDate == null && metadata.getLatestDiiDate() != null) {
                 latestDiiDate = LocalDate.parse(metadata.getLatestDiiDate());
             }
+            if (metadata.getProviderLatestFiiDate() != null) {
+                providerLatestFiiDate = LocalDate.parse(metadata.getProviderLatestFiiDate());
+            }
+            if (metadata.getProviderLatestDiiDate() != null) {
+                providerLatestDiiDate = LocalDate.parse(metadata.getProviderLatestDiiDate());
+            }
             
-            logger.info("Loaded metadata: latestFiiDate={}, latestDiiDate={}", latestFiiDate, latestDiiDate);
+            logger.info("Loaded metadata: latestFiiDate={}, latestDiiDate={}, providerFii={}, providerDii={}", latestFiiDate, latestDiiDate, providerLatestFiiDate, providerLatestDiiDate);
         } catch (Exception e) {
             logger.warn("Failed to load metadata: {}", e.getMessage());
         }
@@ -155,6 +164,23 @@ public class FiiDiiArchiveService {
         return latestDiiDate;
     }
 
+    public LocalDate getProviderLatestFiiDate() {
+        return providerLatestFiiDate;
+    }
+
+    public LocalDate getProviderLatestDiiDate() {
+        return providerLatestDiiDate;
+    }
+
+    public synchronized void setProviderLatestDate(String category, LocalDate date) {
+        if ("FII".equalsIgnoreCase(category)) {
+            providerLatestFiiDate = date;
+        } else if ("DII".equalsIgnoreCase(category)) {
+            providerLatestDiiDate = date;
+        }
+        updateMetadata();
+    }
+
     public synchronized void appendRecords(List<InstitutionalFlowRecord> records) {
         if (records == null || records.isEmpty()) return;
         
@@ -234,14 +260,19 @@ public class FiiDiiArchiveService {
         
         if (latestFiiDate != null) metadata.setLatestFiiDate(latestFiiDate.toString());
         if (latestDiiDate != null) metadata.setLatestDiiDate(latestDiiDate.toString());
+        if (providerLatestFiiDate != null) metadata.setProviderLatestFiiDate(providerLatestFiiDate.toString());
+        if (providerLatestDiiDate != null) metadata.setProviderLatestDiiDate(providerLatestDiiDate.toString());
 
         try {
             if(metadataPath.getParent() != null) {
                 Files.createDirectories(metadataPath.getParent());
             }
-            Files.writeString(metadataPath, objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(metadata));
+            String content = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(metadata);
+            Path tempPath = metadataPath.resolveSibling(metadataPath.getFileName() + ".tmp");
+            Files.writeString(tempPath, content);
+            Files.move(tempPath, metadataPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
-            logger.error("Failed to write metadata", e);
+            logger.error("Failed to write metadata atomically", e);
         }
     }
 

@@ -19,21 +19,35 @@ public class FiiDiiRefreshScheduler {
         this.bootstrapService = bootstrapService;
     }
 
-    @Scheduled(fixedRateString = "#{@fiiDiiConfigService.getRefreshIntervalMinutes() * 60000}", initialDelay = 10000)
-    public void refreshFiiDii() {
+    @Scheduled(cron = "0 0 16 * * MON-FRI", zone = "Asia/Kolkata")
+    public void startDailySync() {
         if (!bootstrapService.isBootstrapCompleted()) {
-            logger.info("Bootstrap is not completed yet, skipping scheduled FII/DII refresh.");
+            logger.info("Bootstrap is not completed yet, skipping daily sync.");
             return;
         }
 
-        logger.info("Starting scheduled FII and DII refresh...");
-
-        logger.info("Syncing FII activity...");
+        logger.info("Starting daily market close FII and DII refresh...");
         bootstrapService.syncData("FII", archiveService.getLatestFiiDate());
-
-        logger.info("Syncing DII activity...");
         bootstrapService.syncData("DII", archiveService.getLatestDiiDate());
+        logger.info("Completed daily FII and DII refresh.");
+    }
 
-        logger.info("Completed scheduled FII and DII refresh.");
+    @Scheduled(cron = "0 0 17-23 * * MON-FRI", zone = "Asia/Kolkata")
+    public void retryIfMissing() {
+        if (!bootstrapService.isBootstrapCompleted()) {
+            return;
+        }
+
+        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
+
+        if (archiveService.getLatestFiiDate() == null || !today.equals(archiveService.getLatestFiiDate())) {
+            logger.info("Hourly retry: Syncing FII activity...");
+            bootstrapService.syncData("FII", archiveService.getLatestFiiDate());
+        }
+
+        if (archiveService.getLatestDiiDate() == null || !today.equals(archiveService.getLatestDiiDate())) {
+            logger.info("Hourly retry: Syncing DII activity...");
+            bootstrapService.syncData("DII", archiveService.getLatestDiiDate());
+        }
     }
 }

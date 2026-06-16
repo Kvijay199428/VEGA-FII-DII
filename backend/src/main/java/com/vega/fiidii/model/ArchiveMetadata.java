@@ -8,6 +8,8 @@ public class ArchiveMetadata {
     private long latestTimestamp;
     private String latestFiiDate;
     private String latestDiiDate;
+    private String providerLatestFiiDate;
+    private String providerLatestDiiDate;
 
     public ArchiveMetadata() {
     }
@@ -32,4 +34,10 @@ public class ArchiveMetadata {
 
     public String getLatestDiiDate() { return latestDiiDate; }
     public void setLatestDiiDate(String latestDiiDate) { this.latestDiiDate = latestDiiDate; }
+
+    public String getProviderLatestFiiDate() { return providerLatestFiiDate; }
+    public void setProviderLatestFiiDate(String providerLatestFiiDate) { this.providerLatestFiiDate = providerLatestFiiDate; }
+
+    public String getProviderLatestDiiDate() { return providerLatestDiiDate; }
+    public void setProviderLatestDiiDate(String providerLatestDiiDate) { this.providerLatestDiiDate = providerLatestDiiDate; }
 }
