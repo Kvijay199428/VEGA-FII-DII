@@ -771,8 +771,11 @@ public class FiiDiiArchiveService {
     public void init() {
         this.archivePath = configService.getArchivePath();
         this.metadataPath = configService.getMetadataPath();
-        loadMetadata();
+        logger.info("Archive path = {}", archivePath.toAbsolutePath());
+        logger.info("Metadata path = {}", metadataPath.toAbsolutePath());
         loadArchive();
+        rebuildLatestDatesFromArchive();
+        loadMetadata();
     }
 
     private void loadMetadata() {
@@ -780,20 +783,25 @@ public class FiiDiiArchiveService {
         try {
             String content = Files.readString(metadataPath);
             ArchiveMetadata metadata = objectMapper.readValue(content, ArchiveMetadata.class);
-            if (metadata.getLatestFiiDate() != null) {
+            
+            // Re-sync metadata with archive reality if they differ significantly
+            if (latestFiiDate == null && metadata.getLatestFiiDate() != null) {
                 latestFiiDate = LocalDate.parse(metadata.getLatestFiiDate());
             }
-            if (metadata.getLatestDiiDate() != null) {
+            if (latestDiiDate == null && metadata.getLatestDiiDate() != null) {
                 latestDiiDate = LocalDate.parse(metadata.getLatestDiiDate());
             }
+            
             logger.info("Loaded metadata: latestFiiDate={}, latestDiiDate={}", latestFiiDate, latestDiiDate);
         } catch (Exception e) {
-            logger.warn("Failed to load metadata, will recreate from archive: {}", e.getMessage());
+            logger.warn("Failed to load metadata: {}", e.getMessage());
         }
     }
 
     private void loadArchive() {
+        logger.info("Starting to load archive from: {}", archivePath.toAbsolutePath());
         if (!Files.exists(archivePath)) {
+            logger.info("Archive file does not exist, creating new one.");
             try {
                 if(archivePath.getParent() != null) {
                     Files.createDirectories(archivePath.getParent());
@@ -806,28 +814,48 @@ public class FiiDiiArchiveService {
         }
 
         try (Stream<String> lines = Files.lines(archivePath)) {
+            logger.info("Successfully opened archive file for reading.");
             lines.forEach(line -> {
                 if(line.trim().isEmpty()) return;
                 try {
                     InstitutionalFlowRecord record = objectMapper.readValue(line, InstitutionalFlowRecord.class);
                     existingHashes.add(record.getSourceHash());
                     inMemoryArchive.add(record);
-                    updateLatestDates(record);
-                } catch (JsonProcessingException e) {
-                    logger.warn("Failed to parse line: {}", line);
+                } catch (Exception e) {
+                    logger.warn("Failed to parse line: {} - Error: {}", line, e.getMessage());
                 }
             });
-            logger.info("Loaded {} records from archive.", inMemoryArchive.size());
-            logger.info("Latest FII date: {}, Latest DII date: {}", latestFiiDate, latestDiiDate);
-        } catch (IOException e) {
-            logger.error("Failed to load archive", e);
+            logger.info("Archive loading completed. Loaded {} records.", inMemoryArchive.size());
+        } catch (Throwable t) {
+            logger.error("CRITICAL: Failed to load archive due to unexpected error", t);
         }
     }
 
-    private synchronized void updateLatestDates(InstitutionalFlowRecord record) {
-        LocalDate recordDate = Instant.ofEpochMilli(record.getTimeStamp())
+    private synchronized void rebuildLatestDatesFromArchive() {
+        logger.info("Rebuilding latest dates from {} in-memory records...", inMemoryArchive.size());
+        latestFiiDate = inMemoryArchive.stream()
+                .filter(r -> "FII".equalsIgnoreCase(r.getCategory()))
+                .map(this::extractDate)
+                .max(LocalDate::compareTo)
+                .orElse(null);
+
+        latestDiiDate = inMemoryArchive.stream()
+                .filter(r -> "DII".equalsIgnoreCase(r.getCategory()))
+                .map(this::extractDate)
+                .max(LocalDate::compareTo)
+                .orElse(null);
+
+        logger.info("Rebuilt latest dates from archive: FII={}, DII={}", latestFiiDate, latestDiiDate);
+    }
+
+    private LocalDate extractDate(InstitutionalFlowRecord record) {
+        return Instant.ofEpochMilli(record.getTimeStamp())
                 .atZone(ZoneId.of("Asia/Kolkata"))
                 .toLocalDate();
+    }
+
+    private synchronized void updateLatestDates(InstitutionalFlowRecord record) {
+        LocalDate recordDate = extractDate(record);
                 
         if ("FII".equalsIgnoreCase(record.getCategory())) {
             if (latestFiiDate == null || recordDate.isAfter(latestFiiDate)) {
@@ -849,27 +877,64 @@ public class FiiDiiArchiveService {
     }
 
     public synchronized void appendRecords(List<InstitutionalFlowRecord> records) {
+        if (records == null || records.isEmpty()) return;
+        
+        logger.info("Processing batch of {} records...", records.size());
+
+        // Update latest dates from the ENTIRE batch to ensure we don't lag, 
+        // even if some records are already in our archive.
+        updateLatestDatesFromBatch(records);
+
         List<InstitutionalFlowRecord> newRecords = records.stream()
                 .filter(r -> !existingHashes.contains(r.getSourceHash()))
                 .collect(Collectors.toList());
 
         if (newRecords.isEmpty()) {
+            logger.info("No new records to append (all {} were duplicates).", records.size());
+            updateMetadata(); // Still update metadata as dates might have changed
             return;
         }
 
+        logger.info("Filtered to {} new records. Writing to {}...", newRecords.size(), archivePath.toAbsolutePath());
+
         try (BufferedWriter writer = Files.newBufferedWriter(archivePath, StandardOpenOption.CREATE, StandardOpenOption.APPEND)) {
+            int writtenCount = 0;
             for (InstitutionalFlowRecord record : newRecords) {
                 writer.write(objectMapper.writeValueAsString(record));
                 writer.newLine();
                 existingHashes.add(record.getSourceHash());
                 inMemoryArchive.add(record);
-                updateLatestDates(record);
+                writtenCount++;
             }
-            logger.info("Appended {} new records.", newRecords.size());
-            logger.info("After append -> latestFiiDate={}, latestDiiDate={}", latestFiiDate, latestDiiDate);
+            writer.flush();
+            logger.info("Successfully flushed {} records to disk.", writtenCount);
+            logger.info("Archive size now={}, latestFiiDate={}, latestDiiDate={}", inMemoryArchive.size(), latestFiiDate, latestDiiDate);
             updateMetadata();
-        } catch (IOException e) {
-            logger.error("Failed to append records to archive", e);
+        } catch (Throwable t) {
+            logger.error("CRITICAL: Failed to append records to archive", t);
+        }
+    }
+
+    private void updateLatestDatesFromBatch(List<InstitutionalFlowRecord> records) {
+        LocalDate maxFii = records.stream()
+                .filter(r -> "FII".equalsIgnoreCase(r.getCategory()))
+                .map(this::extractDate)
+                .max(LocalDate::compareTo)
+                .orElse(null);
+        
+        LocalDate maxDii = records.stream()
+                .filter(r -> "DII".equalsIgnoreCase(r.getCategory()))
+                .map(this::extractDate)
+                .max(LocalDate::compareTo)
+                .orElse(null);
+
+        if (maxFii != null && (latestFiiDate == null || maxFii.isAfter(latestFiiDate))) {
+            logger.info("Advancing latestFiiDate: {} -> {}", latestFiiDate, maxFii);
+            latestFiiDate = maxFii;
+        }
+        if (maxDii != null && (latestDiiDate == null || maxDii.isAfter(latestDiiDate))) {
+            logger.info("Advancing latestDiiDate: {} -> {}", latestDiiDate, maxDii);
+            latestDiiDate = maxDii;
         }
     }
 
@@ -1087,12 +1152,26 @@ public class HashUtil {
 // File: src/main/java/com/vega/fiidii/util/PathResolver.java
 package com.vega.fiidii.util;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
 public final class PathResolver {
 
-    private static final Path ROOT = Paths.get("").toAbsolutePath().getParent();
+    private static final Path ROOT = findRoot();
+
+    private static Path findRoot() {
+        Path current = Paths.get("").toAbsolutePath();
+        while (current != null) {
+            // fiidii.md is our project-specific root marker
+            if (Files.exists(current.resolve("fiidii.md"))) {
+                return current;
+            }
+            current = current.getParent();
+        }
+        // Fallback to legacy behavior if marker not found
+        return Paths.get("").toAbsolutePath().getParent();
+    }
 
     public static Path root() {
         return ROOT;
@@ -1399,7 +1478,7 @@ logging:
   "totalRecords" : 234,
   "fiiRecords" : 195,
   "diiRecords" : 39,
-  "lastUpdated" : 1781586425753,
+  "lastUpdated" : 1781593190119,
   "latestTimestamp" : 1779993000000,
   "latestFiiDate" : "2026-05-29",
   "latestDiiDate" : "2026-05-29"
