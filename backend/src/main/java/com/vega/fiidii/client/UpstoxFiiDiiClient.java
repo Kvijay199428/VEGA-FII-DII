@@ -16,6 +16,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -43,7 +44,7 @@ public class UpstoxFiiDiiClient {
                 configService.getConfig().getFii().getEndpoint(),
                 configService.getFiiDataTypes(),
                 "FII",
-                null, null
+                configService.getDefaultInterval(), null
         );
     }
 
@@ -52,7 +53,7 @@ public class UpstoxFiiDiiClient {
                 configService.getConfig().getDii().getEndpoint(),
                 configService.getDiiDataTypes(),
                 "DII",
-                null, null
+                configService.getDefaultInterval(), null
         );
     }
 
@@ -77,10 +78,11 @@ public class UpstoxFiiDiiClient {
             queryString += "&interval=" + URLEncoder.encode(interval, StandardCharsets.UTF_8);
         }
         if (fromDate != null && !fromDate.isEmpty()) {
-            queryString += "&from_date=" + URLEncoder.encode(fromDate, StandardCharsets.UTF_8);
+            queryString += "&from=" + URLEncoder.encode(fromDate, StandardCharsets.UTF_8);
         }
                 
         String url = BASE_URL + endpoint + "?" + queryString;
+        logger.info("Upstox Request URL: {}", url);
         
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -103,6 +105,7 @@ public class UpstoxFiiDiiClient {
                     return parseResponse(response.body(), category);
                 } else {
                     logger.warn("Attempt {}: Failed to fetch {}. Status code: {}", i, category, response.statusCode());
+                    logger.error("Response Body: {}", response.body());
                 }
             } catch (Exception e) {
                 logger.warn("Attempt {}: Exception while fetching {}: {}", i, category, e.getMessage());
@@ -119,47 +122,43 @@ public class UpstoxFiiDiiClient {
         JsonNode dataNode = rootNode.path("data");
         List<InstitutionalFlowRecord> records = new ArrayList<>();
         
-        if (dataNode.isArray()) {
-            for (JsonNode node : dataNode) {
-                InstitutionalFlowRecord record = new InstitutionalFlowRecord();
-                record.setProvider("UPSTOX");
-                record.setCategory(category);
+        if (dataNode.isObject()) {
+            Iterator<String> fields = dataNode.fieldNames();
+            while (fields.hasNext()) {
+                String dataType = fields.next();
+                JsonNode recordsNode = dataNode.get(dataType);
                 
-                // Extract dataType from node (fallback if missing)
-                String dt = node.path("dataType").asText("");
-                if (dt.isEmpty()) {
-                    dt = node.path("segment").asText(""); 
+                if (recordsNode.isArray()) {
+                    for (JsonNode node : recordsNode) {
+                        InstitutionalFlowRecord record = new InstitutionalFlowRecord();
+                        record.setProvider("UPSTOX");
+                        record.setCategory(category);
+                        record.setDataType(dataType);
+                        
+                        record.setTimeStamp(node.path("time_stamp").asLong(0));
+                        record.setBuyAmount(node.path("buy_amount").asDouble(0.0));
+                        record.setSellAmount(node.path("sell_amount").asDouble(0.0));
+                        record.setBuyContracts(node.path("buy_contracts").asLong(0));
+                        record.setSellContracts(node.path("sell_contracts").asLong(0));
+                        record.setOiContracts(node.path("oi_contracts").asLong(0));
+                        record.setOiAmount(node.path("oi_amount").asDouble(0.0));
+                        record.setTotalLongContracts(node.path("total_long_contracts").asLong(0));
+                        record.setTotalShortContracts(node.path("total_short_contracts").asLong(0));
+                        record.setTotalCallLongContracts(node.path("total_call_long_contracts").asLong(0));
+                        record.setTotalPutLongContracts(node.path("total_put_long_contracts").asLong(0));
+                        record.setTotalCallShortContracts(node.path("total_call_short_contracts").asLong(0));
+                        record.setTotalPutShortContracts(node.path("total_put_short_contracts").asLong(0));
+                        
+                        record.setSourceHash(com.vega.fiidii.util.HashUtil.generateSourceHash(
+                                record.getCategory(), record.getDataType(), record.getTimeStamp()
+                        ));
+                        
+                        records.add(record);
+                    }
                 }
-                record.setDataType(dt);
-                
-                // Assuming 'date' in yyyy-MM-dd format or 'timestamp' in epoch millis
-                if(node.has("timestamp")) {
-                     record.setTimeStamp(node.path("timestamp").asLong());
-                } else if(node.has("date")) {
-                     record.setTimeStamp(java.time.LocalDate.parse(node.path("date").asText())
-                         .atStartOfDay(java.time.ZoneId.of("Asia/Kolkata"))
-                         .toInstant().toEpochMilli());
-                }
-                
-                record.setBuyAmount(node.path("buyAmount").asDouble(0.0));
-                record.setSellAmount(node.path("sellAmount").asDouble(0.0));
-                record.setBuyContracts(node.path("buyContracts").asLong(0));
-                record.setSellContracts(node.path("sellContracts").asLong(0));
-                record.setOiContracts(node.path("oiContracts").asLong(0));
-                record.setOiAmount(node.path("oiAmount").asDouble(0.0));
-                record.setTotalLongContracts(node.path("totalLongContracts").asLong(0));
-                record.setTotalShortContracts(node.path("totalShortContracts").asLong(0));
-                record.setTotalCallLongContracts(node.path("totalCallLongContracts").asLong(0));
-                record.setTotalPutLongContracts(node.path("totalPutLongContracts").asLong(0));
-                record.setTotalCallShortContracts(node.path("totalCallShortContracts").asLong(0));
-                record.setTotalPutShortContracts(node.path("totalPutShortContracts").asLong(0));
-                
-                record.setSourceHash(com.vega.fiidii.util.HashUtil.generateSourceHash(
-                        record.getCategory(), record.getDataType(), record.getTimeStamp()
-                ));
-                
-                records.add(record);
             }
+        } else {
+            logger.warn("Upstox response 'data' field is not an object. Found: {}", dataNode.getNodeType());
         }
         return records;
     }
