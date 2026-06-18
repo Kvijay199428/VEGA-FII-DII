@@ -27,8 +27,8 @@ public class FiiDiiRefreshScheduler {
         }
 
         logger.info("Starting daily market close FII and DII refresh...");
-        bootstrapService.syncData("FII", archiveService.getLatestFiiDate());
-        bootstrapService.syncData("DII", archiveService.getLatestDiiDate());
+        bootstrapService.syncLatestSnapshot("FII");
+        bootstrapService.syncLatestSnapshot("DII");
         logger.info("Completed daily FII and DII refresh.");
     }
 
@@ -54,14 +54,14 @@ public class FiiDiiRefreshScheduler {
 
         if (shouldRetry(archiveService.getLatestFiiDate(), archiveService.getProviderLatestFiiDate(), today)) {
             logger.info("Hourly retry: Syncing FII activity...");
-            bootstrapService.syncData("FII", archiveService.getLatestFiiDate());
+            bootstrapService.syncLatestSnapshot("FII");
         } else {
             logger.info("Hourly retry: Skipping FII activity, provider hasn't published newer data or already up to date.");
         }
 
         if (shouldRetry(archiveService.getLatestDiiDate(), archiveService.getProviderLatestDiiDate(), today)) {
             logger.info("Hourly retry: Syncing DII activity...");
-            bootstrapService.syncData("DII", archiveService.getLatestDiiDate());
+            bootstrapService.syncLatestSnapshot("DII");
         } else {
             logger.info("Hourly retry: Skipping DII activity, provider hasn't published newer data or already up to date.");
         }

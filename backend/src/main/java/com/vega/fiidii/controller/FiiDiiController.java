@@ -58,7 +58,7 @@ public class FiiDiiController {
 
         if (interval != null || from != null || to != null) {
             // Ad-hoc user query -> fetch directly without storing
-            return upstoxClient.fetchAdHoc(category, dataType, interval, from, to);
+            return upstoxClient.fetchAdHoc(category, dataType, interval, from);
         } else {
             return archiveService.filterRecords(category, dataType);
         }

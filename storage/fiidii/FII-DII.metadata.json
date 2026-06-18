@@ -1,11 +1,11 @@
 {
-  "totalRecords" : 120,
-  "fiiRecords" : 100,
-  "diiRecords" : 20,
-  "lastUpdated" : 1781625699655,
-  "latestTimestamp" : 1777487400000,
-  "latestFiiDate" : "2026-04-30",
-  "latestDiiDate" : "2026-04-30",
-  "providerLatestFiiDate" : "2026-04-30",
-  "providerLatestDiiDate" : "2026-04-30"
+  "totalRecords" : 12,
+  "fiiRecords" : 10,
+  "diiRecords" : 2,
+  "lastUpdated" : 1781748552873,
+  "latestTimestamp" : 1775068200000,
+  "latestFiiDate" : "2026-04-02",
+  "latestDiiDate" : "2026-04-02",
+  "providerLatestFiiDate" : "2026-04-02",
+  "providerLatestDiiDate" : "2026-04-02"
 }

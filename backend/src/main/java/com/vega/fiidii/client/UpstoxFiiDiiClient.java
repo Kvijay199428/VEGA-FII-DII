@@ -44,7 +44,7 @@ public class UpstoxFiiDiiClient {
                 configService.getConfig().getFii().getEndpoint(),
                 configService.getFiiDataTypes(),
                 "FII",
-                configService.getDefaultInterval(), null, null
+                configService.getDefaultInterval(), null
         );
     }
 
@@ -53,11 +53,29 @@ public class UpstoxFiiDiiClient {
                 configService.getConfig().getDii().getEndpoint(),
                 configService.getDiiDataTypes(),
                 "DII",
-                configService.getDefaultInterval(), null, null
+                configService.getDefaultInterval(), null
         );
     }
 
-    public List<InstitutionalFlowRecord> fetchAdHoc(String category, String dataType, String interval, String fromDate, String toDate) {
+    public List<InstitutionalFlowRecord> fetchLatestFii() {
+        return fetchFiiDiiData(
+                configService.getConfig().getFii().getEndpoint(),
+                configService.getFiiDataTypes(),
+                "FII",
+                "1D", null
+        );
+    }
+
+    public List<InstitutionalFlowRecord> fetchLatestDii() {
+        return fetchFiiDiiData(
+                configService.getConfig().getDii().getEndpoint(),
+                configService.getDiiDataTypes(),
+                "DII",
+                "1D", null
+        );
+    }
+
+    public List<InstitutionalFlowRecord> fetchAdHoc(String category, String dataType, String interval, String fromDate) {
         String endpoint = "FII".equalsIgnoreCase(category) ? 
                 configService.getConfig().getFii().getEndpoint() : 
                 configService.getConfig().getDii().getEndpoint();
@@ -66,28 +84,28 @@ public class UpstoxFiiDiiClient {
                 List.of(dataType) : 
                 ("FII".equalsIgnoreCase(category) ? configService.getFiiDataTypes() : configService.getDiiDataTypes());
                 
-        return fetchFiiDiiData(endpoint, dataTypes, category.toUpperCase(), interval, fromDate, toDate);
+        return fetchFiiDiiData(endpoint, dataTypes, category.toUpperCase(), interval, fromDate);
     }
 
-    public List<InstitutionalFlowRecord> fetchFiiRange(String fromDate, String toDate) {
+    public List<InstitutionalFlowRecord> fetchFiiHistorical(String fromDate) {
         return fetchFiiDiiData(
                 configService.getConfig().getFii().getEndpoint(),
                 configService.getFiiDataTypes(),
                 "FII",
-                configService.getDefaultInterval(), fromDate, toDate
+                configService.getDefaultInterval(), fromDate
         );
     }
 
-    public List<InstitutionalFlowRecord> fetchDiiRange(String fromDate, String toDate) {
+    public List<InstitutionalFlowRecord> fetchDiiHistorical(String fromDate) {
         return fetchFiiDiiData(
                 configService.getConfig().getDii().getEndpoint(),
                 configService.getDiiDataTypes(),
                 "DII",
-                configService.getDefaultInterval(), fromDate, toDate
+                configService.getDefaultInterval(), fromDate
         );
     }
 
-    private List<InstitutionalFlowRecord> fetchFiiDiiData(String endpoint, List<String> dataTypes, String category, String interval, String fromDate, String toDate) {
+    private List<InstitutionalFlowRecord> fetchFiiDiiData(String endpoint, List<String> dataTypes, String category, String interval, String fromDate) {
         String queryString = dataTypes.stream()
                 .map(dt -> "data_type=" + URLEncoder.encode(dt, StandardCharsets.UTF_8))
                 .collect(Collectors.joining("&"));
@@ -97,9 +115,6 @@ public class UpstoxFiiDiiClient {
         }
         if (fromDate != null && !fromDate.isEmpty()) {
             queryString += "&from=" + URLEncoder.encode(fromDate, StandardCharsets.UTF_8);
-        }
-        if (toDate != null && !toDate.isEmpty()) {
-            queryString += "&to=" + URLEncoder.encode(toDate, StandardCharsets.UTF_8);
         }
                 
         String url = BASE_URL + endpoint + "?" + queryString;
@@ -117,39 +132,66 @@ public class UpstoxFiiDiiClient {
     }
 
     private List<InstitutionalFlowRecord> executeWithRetry(HttpRequest request, String category) {
-        int maxRetries = 2; // Retry once -> initial try + 1 retry
+        int maxRetries = 3;
         for (int i = 1; i <= maxRetries; i++) {
             try {
                 HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-                logger.info("Content-Encoding={}", response.headers().firstValue("Content-Encoding").orElse("none"));
-                if (response.statusCode() == 200) {
+                int statusCode = response.statusCode();
+                
+                if (statusCode == 200) {
                     return parseResponse(response.body(), category);
-                } else {
-                    logger.warn("Attempt {}: Failed to fetch {}. Status code: {}", i, category, response.statusCode());
-                    logger.error("Response Body: {}", response.body());
-                    if (response.statusCode() == 429 && i < maxRetries) {
-                        long waitSeconds = response.headers()
-                                .firstValue("Retry-After")
-                                .map(val -> {
-                                    try {
-                                        return Long.parseLong(val);
-                                    } catch (NumberFormatException e) {
-                                        return 60L;
-                                    }
-                                })
-                                .orElse(60L);
-                        logger.warn("Rate limited (429)! Waiting {} seconds before retry...", waitSeconds);
-                        Thread.sleep(waitSeconds * 1000);
-                    } else if (i < maxRetries) {
-                        Thread.sleep(1000);
-                    }
                 }
+
+                logger.warn("Attempt {}/{}: Failed to fetch {}. Status code: {}", i, maxRetries, category, statusCode);
+                logger.error("Response Body: {}", response.body());
+
+                switch (statusCode) {
+                    case 401:
+                        throw new IllegalStateException("Token expired");
+                    case 403:
+                        throw new IllegalStateException("Access denied");
+                    case 429:
+                        if (i < maxRetries) {
+                            long waitSeconds = response.headers()
+                                    .firstValue("Retry-After")
+                                    .map(val -> {
+                                        try {
+                                            return Long.parseLong(val);
+                                        } catch (NumberFormatException e) {
+                                            return 60L;
+                                        }
+                                    })
+                                    .orElse(60L);
+                            logger.warn("Rate limited (429)! Waiting {} seconds before retry...", waitSeconds);
+                            Thread.sleep(waitSeconds * 1000);
+                            continue;
+                        }
+                        break;
+                    case 500:
+                    case 502:
+                    case 503:
+                        if (i < maxRetries) {
+                            logger.warn("Server error ({})! Retrying in 2s...", statusCode);
+                            Thread.sleep(2000);
+                            continue;
+                        }
+                        break;
+                    default:
+                        if (i < maxRetries) {
+                            Thread.sleep(1000);
+                            continue;
+                        }
+                        break;
+                }
+            } catch (IllegalStateException e) {
+                logger.error("Fatal error fetching {}: {}", category, e.getMessage());
+                throw e;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 logger.warn("Attempt {}: Interrupted while fetching {}: {}", i, category, e.getMessage());
                 break;
             } catch (Exception e) {
-                logger.warn("Attempt {}: Exception while fetching {}: {}", i, category, e.getMessage());
+                logger.warn("Attempt {}/{}: Exception while fetching {}: {}", i, maxRetries, category, e.getMessage());
                 if (i < maxRetries) {
                     try {
                         Thread.sleep(1000);

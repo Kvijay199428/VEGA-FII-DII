@@ -21,6 +21,7 @@ public class FiiDiiBootstrapService {
     private final FiiDiiArchiveService archiveService;
     private final UpstoxFiiDiiClient upstoxClient;
     private final FiiDiiConfigService configService;
+    private final FiiDiiSyncDecisionService syncDecisionService;
     private volatile com.vega.fiidii.model.BootstrapState state = com.vega.fiidii.model.BootstrapState.NOT_STARTED;
     private final java.util.concurrent.locks.ReentrantLock fiiLock = new java.util.concurrent.locks.ReentrantLock();
     private final java.util.concurrent.locks.ReentrantLock diiLock = new java.util.concurrent.locks.ReentrantLock();
@@ -29,10 +30,11 @@ public class FiiDiiBootstrapService {
         return "FII".equalsIgnoreCase(category) ? fiiLock : diiLock;
     }
 
-    public FiiDiiBootstrapService(FiiDiiArchiveService archiveService, UpstoxFiiDiiClient upstoxClient, FiiDiiConfigService configService) {
+    public FiiDiiBootstrapService(FiiDiiArchiveService archiveService, UpstoxFiiDiiClient upstoxClient, FiiDiiConfigService configService, FiiDiiSyncDecisionService syncDecisionService) {
         this.archiveService = archiveService;
         this.upstoxClient = upstoxClient;
         this.configService = configService;
+        this.syncDecisionService = syncDecisionService;
     }
 
     public com.vega.fiidii.model.BootstrapState getBootstrapState() {
@@ -44,8 +46,8 @@ public class FiiDiiBootstrapService {
         logger.info("Starting FII/DII Data Bootstrap...");
         state = com.vega.fiidii.model.BootstrapState.RUNNING;
         try {
-            syncData("FII", archiveService.getLatestFiiDate());
-            syncData("DII", archiveService.getLatestDiiDate());
+            syncData("FII", archiveService.getLatestFiiDate(), archiveService.getProviderLatestFiiDate());
+            syncData("DII", archiveService.getLatestDiiDate(), archiveService.getProviderLatestDiiDate());
             state = com.vega.fiidii.model.BootstrapState.SUCCESS;
             logger.info("FII/DII Data Bootstrap completed successfully.");
         } catch (Exception e) {
@@ -54,7 +56,57 @@ public class FiiDiiBootstrapService {
         }
     }
 
-    public void syncData(String category, LocalDate latestStoredDate) {
+    public void syncData(String category, LocalDate latestStoredDate, LocalDate providerLatestDate) {
+        com.vega.fiidii.model.SyncDecision decision = syncDecisionService.determineSyncMode(category, latestStoredDate, providerLatestDate);
+        switch(decision.getMode()) {
+            case INITIAL_LOAD:
+            case BACKFILL:
+                syncHistoricalData(category, decision.getFromDate());
+                break;
+            case LATEST_REFRESH:
+                syncLatestSnapshot(category);
+                break;
+            case NO_SYNC_REQUIRED:
+                logger.info("[{}] Archive already synchronized with provider. Skipping bootstrap.", category);
+                break;
+        }
+    }
+
+    public void syncLatestSnapshot(String category) {
+        java.util.concurrent.locks.ReentrantLock lock = getLock(category);
+        if (!lock.tryLock()) {
+            logger.warn("[{}] Sync already running, skipping concurrent execution.", category);
+            return;
+        }
+        try {
+            logger.info("[{}] Fetching latest snapshot...", category);
+            List<InstitutionalFlowRecord> records;
+            if ("FII".equalsIgnoreCase(category)) {
+                records = upstoxClient.fetchLatestFii();
+            } else {
+                records = upstoxClient.fetchLatestDii();
+            }
+
+            LocalDate maxReturnedDate = records.stream()
+                    .map(r -> java.time.Instant.ofEpochMilli(r.getTimeStamp())
+                            .atZone(ZoneId.of("Asia/Kolkata"))
+                            .toLocalDate())
+                    .max(LocalDate::compareTo)
+                    .orElse(null);
+
+            if (maxReturnedDate != null) {
+                logger.info("[{}] Fetched {} records from snapshot. Latest returned: {}. Appending...", category, records.size(), maxReturnedDate);
+                archiveService.appendRecords(records);
+                archiveService.setProviderLatestDate(category, maxReturnedDate);
+            } else {
+                logger.info("[{}] No records returned from snapshot.", category);
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void syncHistoricalData(String category, LocalDate startDate) {
         java.util.concurrent.locks.ReentrantLock lock = getLock(category);
         if (!lock.tryLock()) {
             logger.warn("[{}] Sync already running, skipping concurrent execution.", category);
@@ -62,81 +114,50 @@ public class FiiDiiBootstrapService {
         }
         try {
             LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-            LocalDate startDate;
+            LocalDate currentDate = startDate;
+            long intervalMs = configService.getRequestIntervalMs();
 
-            if (latestStoredDate == null) {
-                startDate = configService.getDefaultStartDate();
-            } else {
-                startDate = latestStoredDate.plusDays(1);
-            }
+            while (!currentDate.isAfter(today)) {
+                String fromStr = currentDate.format(DateTimeFormatter.ISO_LOCAL_DATE);
+                logger.info("[{}] Fetching historical data from {}", category, fromStr);
 
-            if (startDate.isAfter(today)) {
-                logger.info("[{}] No bootstrap sync required. Latest stored date {} is up to date.", category, latestStoredDate);
-                return;
-            }
-        
-        logger.info("[{}] Missing data from {} to {}", category, startDate, today);
-        
-        int maxDays = configService.getMaxDaysPerRequest();
-        long intervalMs = configService.getRequestIntervalMs();
+                List<InstitutionalFlowRecord> records;
+                if ("FII".equalsIgnoreCase(category)) {
+                    records = upstoxClient.fetchFiiHistorical(fromStr);
+                } else {
+                    records = upstoxClient.fetchDiiHistorical(fromStr);
+                }
 
-        LocalDate currentDate = startDate;
-        while (!currentDate.isAfter(today)) {
-            LocalDate chunkEnd = currentDate.plusDays(maxDays - 1);
-            if (chunkEnd.isAfter(today)) {
-                chunkEnd = today;
-            }
-
-            String fromStr = currentDate.format(DateTimeFormatter.ISO_LOCAL_DATE);
-            String toStr = chunkEnd.format(DateTimeFormatter.ISO_LOCAL_DATE);
-            
-            logger.info("[{}] Fetching chunk: {} to {}", category, fromStr, toStr);
-
-            List<InstitutionalFlowRecord> records;
-            if ("FII".equalsIgnoreCase(category)) {
-                records = upstoxClient.fetchFiiRange(fromStr, toStr);
-            } else {
-                records = upstoxClient.fetchDiiRange(fromStr, toStr);
-            }
-
-            LocalDate maxReturnedDate = null;
-            if (!records.isEmpty()) {
-                maxReturnedDate = records.stream()
+                LocalDate maxReturnedDate = records.stream()
                         .map(r -> java.time.Instant.ofEpochMilli(r.getTimeStamp())
                                 .atZone(ZoneId.of("Asia/Kolkata"))
                                 .toLocalDate())
                         .max(LocalDate::compareTo)
                         .orElse(null);
 
-                if (maxReturnedDate != null && maxReturnedDate.isBefore(chunkEnd)) {
-                    logger.warn("[{}] Provider returned stale or missing data. Requested to {}, latest returned {}", category, chunkEnd, maxReturnedDate);
+                if (maxReturnedDate != null) {
+                    logger.info("[{}] Fetched {} historical records. Latest returned: {}. Appending...", category, records.size(), maxReturnedDate);
+                    archiveService.appendRecords(records);
+                    archiveService.setProviderLatestDate(category, maxReturnedDate);
                 }
 
-                logger.info("[{}] Fetched {} records. Appending...", category, records.size());
-                archiveService.appendRecords(records);
-            }
-
-            if (maxReturnedDate != null) {
-                archiveService.setProviderLatestDate(category, maxReturnedDate);
-            }
-
-            if (maxReturnedDate == null || maxReturnedDate.isBefore(currentDate)) {
-                logger.warn("[{}] Provider has no data for requested range {} to {}. Latest available appears to be {}. Stopping sync for this category.", category, fromStr, toStr, maxReturnedDate);
-                break;
-            }
-            
-            currentDate = chunkEnd.plusDays(1);
-            
-            if (!currentDate.isAfter(today)) {
-                try {
-                    Thread.sleep(intervalMs);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    logger.warn("Bootstrap sync interrupted");
+                if (maxReturnedDate == null || maxReturnedDate.isBefore(currentDate)) {
+                    logger.warn("[{}] No newer data returned (latest: {}). Stopping historical sync for {}.", category, maxReturnedDate, category);
                     break;
                 }
+
+                currentDate = maxReturnedDate.plusDays(1);
+
+                if (!currentDate.isAfter(today)) {
+                    try {
+                        Thread.sleep(intervalMs);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        logger.warn("Bootstrap sync interrupted");
+                        break;
+                    }
+                }
             }
-        }
         } finally {
             lock.unlock();
         }
